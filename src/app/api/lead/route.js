@@ -1,27 +1,29 @@
-
+// pages/api/lead.js
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
-// Helper: Normalize and hash value
-function hash(value) {
+const hash = (value) => {
   if (!value) return null;
-  const normalized = value.toString().trim().toLowerCase();
+  const normalized = String(value).trim().toLowerCase();
   return crypto.createHash("sha256").update(normalized).digest("hex");
-}
+};
 
-// Helper: Extract first name
-function getFirstName(fullName) {
+const getFirstName = (fullName) => {
   if (!fullName) return null;
-  return fullName.trim().split(" ")[0].toLowerCase();
-}
+  return fullName.trim().split(" ").shift(); // First word only
+};
 
 export async function POST(req) {
   try {
     const { name, phone } = await req.json();
 
-    // Normalize and hash PII
-    const hashedPhone = hash(phone);
-    const hashedFirstName = hash(getFirstName(name));
+    // Extract client info
+    const ip = req.headers.get("x-forwarded-for")?.split(",").shift().trim() || "";
+    const userAgent = req.headers.get("user-agent") || "";
+
+    // Hash PII
+    const hashedPhone = phone ? hash(phone.replace(/[^0-9]/g, "")) : null;
+    const hashedFirstName = name ? hash(getFirstName(name)) : null;
 
     const payload = {
       data: [
@@ -31,45 +33,35 @@ export async function POST(req) {
           action_source: "website",
           event_source_url: "https://lead-landing-page.vercel.app/",
           user_data: {
-            // Only send hashed values
             ph: hashedPhone ? [hashedPhone] : [],
             fn: hashedFirstName ? [hashedFirstName] : [],
-            // Optional: client_ip and client_user_agent can be added from headers
+            client_ip_address: ip,
+            client_user_agent: userAgent,
           },
-          // Recommended: include advanced matching if available
-          // external_id, lead_id, etc. can also be added if needed
         },
       ],
       access_token: process.env.FB_ACCESS_TOKEN,
     };
 
-    const response = await fetch(
+    const res = await fetch(
       `https://graph.facebook.com/v18.0/${process.env.NEXT_PUBLIC_PIXEL_ID}/events`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }
     );
 
-    const result = await response.json();
+    const result = await res.json();
 
-    if (!response.ok) {
-      console.error("Facebook API Error:", result);
-      return NextResponse.json(
-        { success: false, error: result },
-        { status: 500 }
-      );
+    if (!res.ok) {
+      console.error("CAPI Error:", result);
+      return NextResponse.json({ success: false, error: result }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, data: result });
-  } catch (error) {
-    console.error("Server Error:", error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    console.error("Server Error:", err);
+    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
 }
