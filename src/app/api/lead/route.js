@@ -20,10 +20,18 @@ export async function POST(req) {
     // Extract client info
     const ip = req.headers.get("x-forwarded-for")?.split(",").shift().trim() || "";
     const userAgent = req.headers.get("user-agent") || "";
+    const referer = req.headers.get("referer") || "https://lead-landing-page.vercel.app/";
 
     // Hash PII
     const hashedPhone = phone ? hash(phone.replace(/[^0-9]/g, "")) : null;
     const hashedFirstName = name ? hash(getFirstName(name)) : null;
+
+    if (!hashedPhone && !hashedFirstName) {
+      return NextResponse.json(
+        { success: false, error: "Missing identifiable user data" },
+        { status: 400 }
+      );
+    }
 
     const payload = {
       data: [
@@ -31,7 +39,8 @@ export async function POST(req) {
           event_name: "Lead",
           event_time: Math.floor(Date.now() / 1000),
           action_source: "website",
-          event_source_url: "https://lead-landing-page.vercel.app/",
+          event_source_url: referer,
+          event_id: crypto.randomUUID(),
           user_data: {
             ph: hashedPhone ? [hashedPhone] : [],
             fn: hashedFirstName ? [hashedFirstName] : [],
@@ -40,11 +49,10 @@ export async function POST(req) {
           },
         },
       ],
-      access_token: process.env.FB_ACCESS_TOKEN,
     };
 
     const res = await fetch(
-      `https://graph.facebook.com/v18.0/${process.env.NEXT_PUBLIC_PIXEL_ID}/events`,
+      `https://graph.facebook.com/v18.0/${process.env.NEXT_PUBLIC_PIXEL_ID}/events?access_token=${process.env.FB_ACCESS_TOKEN}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -59,7 +67,7 @@ export async function POST(req) {
       return NextResponse.json({ success: false, error: result }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, response: result });
   } catch (err) {
     console.error("Server Error:", err);
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
